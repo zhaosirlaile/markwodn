@@ -214,6 +214,7 @@ redis-cli -h ipaddress -p 6379
 **时间复杂度**
 
 | 命令 | 时间复杂度 |
+| -- | -- |
 | keys | O(n) |
 | dbsize | O(1) |
 | del | O(1) |
@@ -221,14 +222,391 @@ redis-cli -h ipaddress -p 6379
 | expire | O(1) |
 | type | O(1) |
 
+### 单线程
+
+一个瞬间只会执行1条命令
+
+**单线程为什么怎么快**
+
+1. 纯内存
+2. 非阻塞IO
+3. 避免线程切换和竟态消耗
+
+> 注意：
+> 1. 一次只允许一条命令
+> 2. 拒绝长（慢）命令
+> 3. 其实不是完全的单线程；fysnc file descriptor；close file descriptor
 
 ### 字符串类型
 
+按照 key - value 进行存储
+
+注意：value最大上限是512MB
+
+**内部编码**
+
+- raw
+- int
+- embstr
+
+**场景**
+
+- 缓存
+- 分布式锁
+- 计数器
+- 等等
+
+**API**
+
+- `incr key`：自增1
+- `decr key`：自减1
+- `incrby key k`：自增k
+- `decrby key k`：自减k
+- `set key value`：不管key是否存在，都设置
+- `setnx key value`：key不存在，才设置
+- `set key value XX`：key存在，才设置
+- `mget key1 key2 key3...`：批量获取key，原子操作 O(n)
+- `mset key1 value1 key2 value2 key3 value3...`：批量设置key-value O(n)
+- `getset key newvalue`：set key newvalue并返回旧的value
+- `append key value`：将value追加到旧的value
+- `strlen key`：返回字符串的长度（注意中文）
+- `incrbyfloat key 3.5`：增加key对应的值3.5
+- `getrange key end`：获取字符串指定下标所有的值
+- `setrange key index value`：设置指定下标所有对应的值
+
 ### 哈希类型
+
+所以hash命令都是以h开头
+
+- `hget key field`：获取value值
+- `hset key field value`：设置value值
+- `hdel key field`：删除value值
+- `hexists key`
+- `hlen key`
+- `hgetall key`
+- `hvals key`
+- `hkeys key` 
+- `hsetnx key`
+- `hincrby key`
+- `hincrbyfloat key`
+
+**内部编码**
+
+- hashtable
+- ziplist
 
 ### 列表类型
 
+- 结构：key-elments
+
+**特点**
+
+- 有序
+- 可以重复
+
+**API**
+
+- rpush：从列表右边插入
+- lpush：从列表左边插入
+- linsert：在list指定的值前｜后插入newValue
+- lpop：从左边弹出1个元素
+- rpop：从右边弹出1个元素
+- lrem：根据count值，从列表中删除所有value相等的项
+- ltrim：按照索引范围修剪列表
+- lrange：获取列表指定索引范围所有item
+- lindex：获取累表指定索引的值
+- llen：获取列表长度
+- lset：设置列表指定索引值为newvalue
+- blpop：阻塞弹出
+- brpop：阻塞弹出
+
+**实战**
+
+- TimeLine
+
+![图 4](images/88e3167c32949702fc74a530a72bd022792944a639694ffa4c63e6d889a09f01.png)  
+
+
+**内部编码**
+
+- linkedlist
+- ziplist
+
 ### 集合类型
+
+**特点**
+
+- 无序
+- 无重复
+- 集合间操作
+
+**API**
+
+- `sadd key element`：向集合key添加element（如果element已经存在，会添加失败）
+- `srem key element`：奖集合key中的element移除掉
+- `scard key`：计算集合大小
+- `sismember key it`：判断it是否在集合中
+- `srandmember key count`：从集合中随机挑count个元素
+- `smembers key`：从集合中所有元素
+  - 无序
+  - 小心使用
+- `srandmember key`： srandmember不会破坏集合
+- `spop key`：spop从集合弹出
+- sdiff：差
+- sinter：并
+- sunior：交
+
+**实战**
+
+- 抽奖系统
+- Like、点赞、踩
+- 标签
+- 互相关注
+
+**内部编码**
+
+- hashtable
+- intset
+
+![图 5](images/38ba2cdcdbac3e22288b88f95debc4cd889e187d73b9374bb234b5ac6d847eaa.png)  
 
 ### 有序集合类型
 
+**特点**
+
+- key - value（score-value）
+
+**集合VS有序集合**
+
+- 无重复元素 - 无重复元素
+- 无序 - 有序
+- element - element + score
+
+**API**
+
+- zadd
+- zrem
+- zscore：获取元素分数
+- zincrby：增加或减少元素的分数
+- zcard：返回元素的总个数
+- rank：获取元素的排名
+- zrange：返回指定缩影范围内的生序元素
+- zrangebyscore：返回指定分数范围内的升序元素
+- zcount：返回有序集合在指定分数范围内的个数
+- zremrangebyrank：删除指定排名内的生序元素
+- zrevrank：
+- zrevrange：
+- zrevrangebyscore
+- zinterstore
+- zunionstore
+
+**实例**
+
+- 排行榜
+- 
+
+**内部编码**
+
+- skiplist
+- ziplist
+
+## 客户端SDK的优点
+
+|  | 优点 | 缺点 |
+| -- | -- | -- |
+| 直连 | 简单方便；适用于少量长期连接场景 | 存在每次新建/关闭TCP开销；资源无法控制,存在连接泄露的可能;go-redis对象线程不安全 |
+| 连接池 | go-redis预先生成，降低开销使用；连接池的形式保护和控制资源的使用 | 相对于直连，使用相对麻烦，尤其在资源的管理上需要很多参数来保证，一旦规划不合理也会出现问题 |
+
+## Redis其他功能
+
+### 慢查询
+
+**生命周期**
+
+![图 1](images/e2a8408219572d294f4040b4830958fe3ebf6f02bda07738387091fa726dead3.png)  
+
+1. 慢查询发送在第3个阶段
+2. 客户端超时不一定慢查询，但慢查询是客户端超时的一个可能因素
+
+**配置**
+
+![图 2](images/6c0d081417011b6d76dc64bdb8dbc4a907428a3ed6e8e7a1c207752b78f9bdfa.png)  
+
+- `slowlog-max-len`：慢查询队列长度，效果有以下几点：
+  1. 先进先出对垒
+  2. 固定长度
+  3. 保存在内存内
+- `slowlog-log-slower-than`：当查询超过这个时间就加入到这个慢查询队列中
+  1. 慢查询阈值（单位：微秒）
+  2. `slowlong-log-slower-than=0`，记录所有命令
+  3. `slowlong-log-slower-than<0`，不记录任何命令
+
+**方法**
+
+1. 默认值
+   - `config get slowlog-max-len = 128`
+   - `config get slowlog-log-slower-than = 10000`
+2. 修改配置文件重启
+
+**命令**
+
+1. `slowlog get[n]`：获取慢查询队列
+2. `slowlog len`：获取慢查询队列长度
+3. `slowlog reset`：清空慢查询队列
+
+**运维经验**
+
+1. `slowlogl-max-len`：不要设置过小，通常设置1000左右
+2. `slowlog-log-slower-than`：不要设置过大，默认10ms，通常设置1ms
+3. 理解慢查询出现的生命周期
+4. 定期持久化慢查询
+
+### pipeline - 流水线
+
+1次网络命令通信模型
+
+![图 3](images/e297c457f9d2f647d5a5ac1621a70a71e1bd6f680f6c2362217f38a5dfac813f.png)  
+
+批量网络命令通信模型
+
+![图 4](images/6775495f5b208f1634a112e2572cfbaad0e191c2e5b7a650c931692fd688fdeb.png)  
+
+**什么是流水线**
+
+![图 5](images/37ec08ef85149b8f3cb28122a1a6c87b120cf6e751b1429a58fee102d60213b2.png)  
+
+| 命令 | N个命令操作 | 1次pipeline(n个命令) |
+| -- | -- | -- |
+| 时间 | n次网络 + n次命令 | 1次网络 + n次命令 |
+| 数据量 | 1次命令 | n条命令 |
+
+> **注意：**
+> 1. redis的命令时间是微妙级别的
+> 2. pipeline每次条数要控制（网络）
+
+
+
+**客户端实现**
+
+![图 6](images/f56aadc5f6e5ef963f05433f5b1b8f39cbcd8046eeb1447a9d76f6a32c486064.png)  
+
+**与原生M操作**
+
+
+![图 7](images/4fcb83918c16fda623231796f6d2f5e165ccdd09bedeb94cba40a1f773e44035.png)  
+
+非原子
+
+**建议**
+
+1. 注意每次pipeline携带数据量
+2. pipeline每次只能作用在一个Redis节点上 
+
+### 发布订阅
+
+**角色**
+
+- 发布者（publisher）
+- 订阅者（subscriber）
+- 频道（channel）
+
+![图 8](images/b05444f331619841a84416a080b06b0bd548382e4af79a326c4c8ef5dcaeb685.png)  
+
+订阅者是可以订阅多个频道的
+
+**API**
+
+- publish（发布命令）：订阅者个数
+- unsubscribe：
+- subscribe
+- 其他
+
+**消息队列**
+
+![图 9](images/3e643556e6c48e42a3145babad18611607da2443d86c951040fb6b38ba201691.png)  
+
+### Bitmap - 位图
+
+**什么是位图**
+
+位图就是二进制，一位一位的，redis中可以一位一位的设置
+
+**API**
+
+- setbit
+- getbit
+- bitcount
+- bitop
+- bitpos
+
+**例子**
+
+- 独立用户统计
+
+### HyperLogLog
+
+**什么是HyperLogLog**
+
+1. 基于HyperLogLog算法：极小空间完成独立数量统计。
+2. 本质是字符串
+
+**三个命令**
+
+1. pfadd：向hyperloglog添加元素
+2. pfcount：计算hyperloglog的独立总数
+3. pfmerge：合并多个hyperloglog
+
+**使用经验**
+
+1. 是否能容错错误？（错误率：0.81%）
+2. 是否需要单条数据？
+
+### GEO
+
+**什么是GEO**
+
+- 存储经纬度，技术两地距离，范围计算等
+
+**API**
+
+- geoadd：添加地理信息
+- geopos：获取地理信息
+- geodist：获取两个地理位置的距离
+- georadius：获取指定位置范围内的信息集合
+
+## Redis持久化 - 特性
+
+### 什么是Redis持久化
+
+redis所有数据保持在内存中，对数据的更新将异步地保存到磁盘上
+
+内存 -》持久化到磁盘
+
+**持久化方式**
+
+- 快照
+  - MySQL Dump
+  - Redis RDB
+- 写日志
+  - MySQL Binlog
+  - Hbase Hlog
+  - Redis AOF
+
+### RDB
+
+**什么是RDB**
+
+![图 10](images/5572a4ff517bbdcab6f368347a021970e423c21c67a104c52198f6ff15907ccf.png) 
+
+RDB也是复制的媒介
+
+**如何触发RDB**
+
+主要有三种方式：
+
+- save（同步）：会造成阻塞
+  - 文件策略：如存在老的RDB文件，新替换老的
+  - 复杂度：O(N)
+- bgsave（异步）：使用redis子进程，来创建，但是fork也会造成阻塞
+  - 文件策略和复杂度和save一样
+- 自动：
