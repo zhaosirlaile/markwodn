@@ -609,4 +609,210 @@ RDB也是复制的媒介
   - 复杂度：O(N)
 - bgsave（异步）：使用redis子进程，来创建，但是fork也会造成阻塞
   - 文件策略和复杂度和save一样
-- 自动：
+- 自动：自动来生产rdb，但是不能控制（效果不好）
+
+> 最佳配置:
+> - 不要使用save
+> - `dbfilename dump-${prot}.rdb`
+> - `dir /bigdiskpath`
+> - `stop-writes-on-bgsave-error yes`
+> - `rdbcompression yes`
+
+除了上面三种方式，还有几种**不容忽略方式**
+
+1. 全量复制
+2. debug reload
+3. shutdown
+
+**RDB总结**
+
+1. RDB是Redis内存到硬盘的快照，用于持久化
+2. save通常会阻塞Redis
+3. bgsave不会阻塞Redis，但是会fork新进程
+4. save自动配置满足任一就会被执行。
+5. 有些触发技术不容忽视
+
+### AOF
+
+**RDB有什么问题**
+
+- 耗时、耗性能
+- 不可控、丢失数据
+
+![图 1](images/504d4dbf9835999c743ec9d186b0f2ce3ba9ba35d599c1575b21852dc72f277a.png)  
+
+| 时间戳 | save |
+| -- | -- |
+| T1 | 执行多个写命令 |
+| T2 | 满足执行多个写命令 |
+| T3 | 再次执行多个写命令 |
+| T4 | 宕机 |
+
+> 如何T4阶段出现，T3到T4之间到数据就会消失（没保存）
+
+那出现上面这种情况怎么办呢？
+
+AOF就是解决上面的情况诞生的
+
+**AOF运行原理**
+
+Redis执行写命令就会打一条日志，并把日志打到AOF文件中
+
+**AOF的三种策略**
+
+- always：都会执行fsync到硬盘中
+  - ![图 2](images/ed1bf7b92adbb08491704231702dc8e4abff9647d1a68bffcb833758cb15b7e1.png)  
+- everysec：每秒把缓冲区fsync到硬盘上（默认值）
+  - ![图 3](images/6b7440a85f4885bf8b96661934e6406bf9dfbef8a1d6a16c029a26035a8a9643.png)  
+- no：表示操作系统决定，操作系统觉得什么时候刷就什么时候刷
+  - ![图 4](images/b86a4cc323f99e9413426c7fe48aa2166901658531df1df3a7030184842d78df.png)  
+
+优缺点：
+
+| 命令 | always | everysec | no |
+| -- | -- | -- | -- |
+| 优点 | 不丢失数据 | 每秒一次fsync丢1秒数据 | 不用管 |
+| 缺点 | IO开销较大，一般的sata盘只有几百TPS | 丢1秒数据 | 不可控 |
+
+**AOF重写**
+
+其实就是将Redis的重写重读进行优化
+
+作用
+
+- 减少硬盘占用量
+- 加速恢复速度
+
+两种实现方式
+
+- bgrewriteaof
+  - ![图 5](images/753828449edf58310ce0d8947f4894f77995084062a6375f228b3b369d0d1edf.png)  
+- AOF重写配置
+  - `auto-aof-rewrite-min-size`：AOF文件重写需要的尺寸
+  - `auto-aof-rewrite-percentage`：AOF文件增长率
+  - `aof-current_size`：AOF当前尺寸（单位：字节）
+  - `aof_base_size`：AOF上次启动和重写的尺寸（单位：字节）
+- 自动触发机制
+  - aof_cuurent_size > auto-aof-rwrite-min-size
+  - aof_current_size - aof_base_size/aof_base_size > auto-aof-rewrite-percentage
+
+![图 6](images/a9a4875f8b5f08951002b65ff351d8eed53b01f390be6b59bb40a0b23956b4a8.png)  
+
+**Redis持久化的取舍和选择**
+
+| 命令 | RDB | AOF |
+| -- | -- | -- |
+| 启动优先级 | 低 | 高 |
+| 体积 | 小 | 大 |
+| 恢复速度 | 快 | 慢 |
+| 数据安全性 | 丢数据 | 根据策略决定 |
+| 轻重 | 重 | 轻 |
+
+**RDB最佳策略**
+
+- “关”
+- 集中管理
+- 主从，从开
+
+**AOF最佳策略**
+
+- “开”：缓存和存储
+- AOF重写集中管理
+- 使用everysec
+
+**最佳策略**
+
+- 小分片
+- 缓存或者存储
+- 监控（硬盘、内存、负载、网络）
+- 足够的内存
+
+## Redis常见持久化开发问题
+
+### fork操作
+
+1. 同步操作
+2. 与内存量息息相关：内存越大，耗时越长（与机器类型有关）
+3. info:latest_fork_usec
+
+**改善fork**
+
+1. 有限使用物理机或者高效支持fork操作的虚拟化技术
+2. 控制Redis实例最大可用内存：maxmemory
+3. 合理配置Linux内存分配策略：vm.overcommit_memory=1
+4. 降低fork频率：例如放宽AOF重写自动触发时机，不必要的全量复制
+
+### 子进程开销和优化
+
+1. CUP：
+   - 开销：RDB和AOF文件生成，属于CPU密集型
+   - 优化：不做CPU绑定，不和CPU密集型部署
+2. 内存
+   - 开销：fork内存开销，copy-on-write
+   - 优化：echo never > /sys/kernel/mm/transparent_hugepage/enabled
+3. 硬盘
+   - 开销：AOF和RDB文件写入，可以集合iostat，iotop分析
+
+**硬盘优化**
+
+1. 不要和高硬盘负载服务部署在一起：存储服务、消息队列等
+2. no-appendfsync-on-rewrite = yes
+3. 根据写入量决定磁盘类型：例如ssd
+4. 单机多实例持久化文件目录可以考虑分盘
+
+
+### AOF阻塞
+
+![图 7](images/7e6ff4b36987902e05e1dbaa212d883710c9a339e08cfe33833b57f55ab4d4a9.png)  
+
+保证AOF安全性的策略
+
+**如何定位呢？**
+
+- redis日志：Asynchronous AOF fsync is taking too long （disk is bysy？）.Writing the AOF buffer without waiting for fsync to complete,this may slow down Redis.
+- info persistence
+
+## 主从复制
+
+**单机有什么问题？**
+
+- 机器故障
+- 容量瓶颈
+- QPS瓶颈
+
+**主从复制作用**
+
+- 数据副本
+- 扩展读性能
+
+![图 8](images/b0c58cf791c6703a7ec21e47c10aab826d895f61d4cb7554611bfda056600ef9.png)  
+
+**一主多从**
+
+![图 9](images/198c8fb7cafa9320d783f5ca59165f82df453a0b433dc65eb216fca726061f38.png)  
+
+1. 一个master可以有多个slave
+2. 一个slave可以有多个master
+3. 数据流向是单向的，master到slave
+
+### 如何设置主从复制
+
+- slaveof命令
+- 配置
+
+![图 10](images/2462178b638fc5d8fd1eb903bdf8bba809c28298d1e0b3dd0042de6ef820e8de.png)  
+
+**取消复制**
+
+`slaveof no one`
+
+**配置**
+
+- `slaveof ip port`
+- `slave-reday-only yes`
+
+| 方式 | 命令 | 配置 |
+| -- | -- | -- |
+| 优点 | 无需重启 | 统一配置 |
+| 优化 | 不变于管理 | 需要重启 |
+
